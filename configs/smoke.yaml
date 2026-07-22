@@ -1,0 +1,75 @@
+# Plumbing-only configuration. It is intentionally too small for scientific reporting.
+run:
+  name: smoke_only
+  seed: 20270701
+  device: auto
+  num_workers: 0
+  deterministic_algorithms: true
+  overwrite_derived_audio: false
+paths:
+  raw: data/raw
+  derived: data/derived
+  manifests: data/manifests
+  results: results_smoke
+  checkpoints: checkpoints_smoke
+  paper_generated: paper/generated_smoke
+resources:
+  sample_rate: 16000
+  librispeech_root: data/raw/librispeech
+  musan_url: https://www.openslr.org/resources/17/musan.tar.gz
+  musan_md5: 0c472d4fc0c5141eca47ad1ffeb2a7df
+  rirs_url: https://www.openslr.org/resources/28/rirs_noises.zip
+  rirs_md5: e6f48e257286e05de56413b4779d8ffb
+  resource_split: [0.80, 0.10, 0.10]
+primary:
+  enabled: true
+  train_split: train-clean-100
+  pool_hours: 0.10
+  candidate_count: 2
+  budgets_hours: [0.10]
+  families: [noise]
+  low_severity: {noise_snr_db: 15, reverb_wet: 0.25, bandlimit_hz: 7000}
+  high_severity: {noise_snr_db: 0, reverb_wet: 1.0, bandlimit_hz: 2500}
+  paired_policies: [pair_random, pair_dnsmos_ovrl]
+  confirmatory_policy: pair_dnsmos_ovrl
+  confirmatory_budget_hours: 0.10
+  confirmatory_seeds: [11]
+  exploratory_seeds: [11]
+natural:
+  enabled: false
+  train_split: train-other-500
+  pool_hours: 0.10
+  budget_hours: 0.10
+  policies: []
+  seeds: [11]
+evaluation:
+  test_clean_split: test-clean
+  test_other_split: test-other
+  synthetic_conditions: []
+metrics:
+  dnsmos: {enabled: true, personalized: false}
+  squim: {enabled: true, objective_bundle: SQUIM_OBJECTIVE}
+asr:
+  sample_rate: 16000
+  vocabulary: " ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
+  model:
+    conv_channels: [32, 48, 64, 96, 96]
+    conv_kernels: [10, 8, 8, 4, 4]
+    conv_strides: [5, 4, 4, 2, 2]
+    d_model: 96
+    nhead: 4
+    num_layers: 2
+    dim_feedforward: 256
+    dropout: 0.10
+  train:
+    batch_size: 2
+    gradient_accumulation: 1
+    max_steps: 2
+    learning_rate: 0.0003
+    weight_decay: 0.01
+    warmup_steps: 1
+    max_audio_seconds: 12
+    grad_clip_norm: 5.0
+    eval_every_steps: 2
+statistics: {bootstrap_draws: 20, confidence_level: 0.95, correction: holm}
+report: {figure_dpi: 120, primary_evaluation: clean}

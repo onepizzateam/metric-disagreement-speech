@@ -1,0 +1,303 @@
+\documentclass[10pt,twocolumn]{article}
+\usepackage{workshop2027}
+
+\title{Does Speech Quality Rank ASR Training Utility?\\
+Counterfactual Evaluation of Source-Calibrated Data Curation}
+
+\author{Anonymous authors\\
+Interspeech 2027 Workshop submission}
+
+\newcommand{\placeholder}[1]{\textcolor{red}{\fbox{\scriptsize\textsf{#1}}}}
+\newcommand{\dns}{\textsc{DNSMOS}}
+\newcommand{\squim}{\textsc{SQUIM}}
+\newcommand{\wer}{\textsc{WER}}
+\newcommand{\asr}{\textsc{ASR}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+No-reference speech-quality predictors are increasingly practical as corpus filters, but their usual target is listener-perceived quality rather than the usefulness of an utterance for training automatic speech recognition (\asr). This distinction matters because a global quality threshold can simultaneously remove bad recordings and erase acoustic or source variation that a recognizer needs for robustness. We present a controlled evaluation of this transfer problem. From raw LibriSpeech audio, we generate two degraded renditions of each source utterance and ask frozen no-reference metrics to choose one rendition. Every paired policy therefore trains on exactly the same utterances, transcripts, speakers, duration, update count, model initialization, and data order; only the selected waveform differs. A secondary, fixed-hour experiment measures the distributional consequences of ordinary global filtering on naturally variable recordings. We compare \dns{} P.835 components and reference-free \squim{} estimates with random, low-score, oracle, source-quantile, and score-stratified policies using a randomly initialized compact CTC recognizer. The prespecified primary paired contrast is \dns{}-OVRL versus random selection at a fixed audio budget, evaluated on clean speech with paired seeds and a hierarchical bootstrap. The observed effect is \placeholder{primary\_dnsmos\_minus\_random\_percentage\_points} percentage points in \wer{} (confidence interval \placeholder{primary\_dnsmos\_minus\_random\_ci\_percentage\_points}; sign-flip $p=\placeholder{primary\_sign\_flip\_p}$). The study supplies a reproducible test of whether perceptual quality is a transportable curation utility, rather than assuming that it is.
+\end{abstract}
+
+\keywords{speech quality assessment, data curation, automatic speech recognition, MOS prediction, reproducibility, robustness}
+
+\section{Introduction}
+
+Speech datasets are rarely clean enough to use without triage. They may contain background noise, reverberation, bandwidth loss, clipping, inconsistent recording chains, segmentation errors, transcription errors, and source-specific artifacts. At collection time a clean waveform reference is normally unavailable, and extensive listening studies are prohibitively expensive. These conditions make no-reference speech-quality assessment attractive: a curator can score every utterance and retain only material predicted to sound good.
+
+That workflow embeds a strong but commonly implicit assumption: an automatic score calibrated to human perceptual quality also ranks the \emph{training utility} of utterances for a downstream recognizer. The two objectives overlap but are not identical. A listener may prefer a clean, narrow range of recording conditions, whereas robust \asr{} can benefit from acoustic diversity. Conversely, a poor perceptual score might indicate a damaged signal whose transcript is unlearnable. The relevant question is not whether speech quality matters---it plainly can---but whether a frozen, globally applied quality score is a sufficient statistic for marginal \asr{} value at a fixed labeling and compute budget.
+
+The automatic-metric literature provides increasingly capable tools. Intrusive metrics such as PESQ \citep{rix2001pesq} and STOI \citep{taal2011stoi} compare a waveform with a matched clean reference. Single-ended neural models eliminate that requirement: Quality-Net estimates a PESQ-like target \citep{fu2018qualitynet}; MOSNet predicts voice-conversion scores \citep{lo2019mosnet}; \dns{} P.835 predicts speech, background-noise, and overall quality for noise-suppression evaluation \citep{reddy2022dnsmosp835}; and NISQA predicts overall quality together with noisiness, coloration, discontinuity, and loudness for communication impairments \citep{mittag2021nisqa}. TorchAudio-\squim{} provides reference-free estimators of several commonly used objective metrics \citep{kumar2023squim}. These systems are useful estimators of their intended targets. None is trained to estimate the contribution of an utterance to a recognizer trained later.
+
+The transfer is particularly uncertain because score meaning is context-sensitive. Mean-opinion-score (MOS) labels can shift with the range of stimuli encountered in a listening experiment \citep{cooper2023range}; score alignment across corpora is itself a research problem \citep{pieper2024alignnet}. More generally, the reliability of perceptual objective measures can depend on their application domain \citep{torcoli2021domain}. A recent study of synthetic speech sources found no clear relation between computable NISQA/intelligibility scores and downstream \asr{} performance \citep{rossenbach2024ttsasr}. That finding is informative but does not isolate individual raw speech recordings, fixed duration, or distributional selection effects.
+
+Data curation for speech recognition is also active, but mostly uses a different evidence signal. Some pipelines validate transcripts or pseudo-labels, including large-scale corpus work and recent multi-stage filtering \citep{rangappa2025multistage}. Quality estimation for \asr{} predicts the correctness of an \emph{existing hypothesis} from audio--text information \citep{negri2014quality}; this is not equivalent to an audio-only perceptual metric for training a new model. Other work selects target-domain audio with learned acoustic relevance \citep{park2022contrastive} or discrete speech representations \citep{lu2022discrete}. Quality-based curation has also been shown useful for speech enhancement \citep{li2025lessismore}. These are important precedents, but they leave open a narrower causal question: \emph{does a frozen no-reference perceptual score select raw human \asr{} training recordings that improve \asr{}, when content, speaker, transcript, duration, and training compute are invariant?}
+
+We answer this question with two deliberately complementary experiments:
+
+\begin{enumerate}[leftmargin=1.2em,itemsep=0.15em]
+    \item \textbf{Counterfactual paired curation.} Every source utterance has two controlled severity candidates that share the same corruption family and resource draw. A policy retains exactly one candidate per source. This eliminates content, duration, speaker, label, and incidental-resource confounds and measures the direct utility of a metric's \emph{within-utterance} decision.
+    \item \textbf{Deployment-style global curation.} A naturally variable raw-speech pool is filtered to a fixed duration. This measures the practical behavior of global score ranking, including retention shifts in source and acoustic-condition coverage.
+\end{enumerate}
+
+The artifact is designed to falsify, rather than presume, the quality-as-utility assumption. We pre-specify in configuration the selector families, data budgets, source/resource partitions, model architecture, training schedule, evaluation sets, primary contrast, and statistical procedure. All values obtained by running the experiment remain marked with \verb|\placeholder{...}| in this manuscript.
+
+\section{Related work and problem formulation}
+
+\subsection{What automatic quality metrics measure}
+
+An intrusive metric receives a reference $x$ and a degraded version $\tilde{x}$; it can estimate degradation by comparing the pair. PESQ and STOI are canonical examples \citep{rix2001pesq,taal2011stoi}. This reference is absent for in-the-wild data curation. No-reference methods instead infer a quality target from $\tilde{x}$ alone. The target may be a listener MOS, a component-specific rating, an estimate of an intrusive metric, or a task-specific signal such as intelligibility.
+
+Metric domain is consequential. \dns{} P.835 was trained to predict P.835 speech, background, and overall scores for noise suppressors \citep{reddy2022dnsmosp835}; NISQA focuses on transmission and communication-network degradation \citep{mittag2021nisqa}; MOSNet was introduced for voice conversion \citep{lo2019mosnet}. \squim{} makes reference-free estimates of PESQ, STOI, and SI-SDR convenient in TorchAudio \citep{kumar2023squim}. We do not interpret any of these outputs as ground-truth quality or as interchangeable scales. In particular, the present work uses ranking within a fixed metric, not threshold equality across metric families.
+
+This distinction is also why we do not use human MOS as a post-hoc stand-in for \asr{} utility. Human perceptual judgment remains meaningful, but the corpus effect and range-equalizing behavior show that scores are not necessarily global cardinal measurements \citep{cooper2023range,pieper2024alignnet}. A curator who globally keeps the best MOS predictions assumes comparability that the MOS measurement process itself need not support.
+
+\subsection{Speech data curation}
+
+Prior curation strategies demonstrate that reducing data can preserve or improve task performance when the removed material is unhelpful. In \asr{}, selection has been based on domain relevance \citep{park2022contrastive}, unsupervised speech representations \citep{lu2022discrete}, transcript validity, and pseudo-label confidence \citep{rangappa2025multistage}. These methods are not baselines for the same signal: transcript confidence uses language and recognition information, while our selectors see only waveform-derived quality scores and permitted source identifiers.
+
+Quality filtering has meaningful task-specific precedents. Work on speech enhancement reports benefits from carefully curated clean targets \citep{li2025lessismore}; TTS and synthetic-\asr{} pipelines have studied source quality and generated audio \citep{rossenbach2024ttsasr}. Our claim is therefore intentionally limited. To our knowledge, we found no controlled study that jointly compares frozen perceptual metric choice, global versus within-source calibration, equal-duration raw-speech selection, downstream \asr{} robustness, and retention composition while making every source utterance, transcript, speaker, duration, and training schedule exactly invariant in a primary experiment.
+
+\subsection{Formal distinction between quality and utility}
+
+Let $u \in \mathcal{U}$ index a source utterance with transcript $y_u$ and source identity $g_u$. The primary renderer creates candidates
+\begin{equation}
+\mathcal{C}_u = \{\tilde{x}_{u,0},\tilde{x}_{u,1}\},
+\end{equation}
+where both candidates share $y_u$, $g_u$, and duration but differ acoustically. A frozen metric $m$ emits $s_m(\tilde{x})$. Its local policy is
+\begin{equation}
+\pi_m(u) = \arg\max_{c \in \{0,1\}} s_m(\tilde{x}_{u,c}).
+\label{eq:pair}
+\end{equation}
+Because every policy applies exactly one choice per $u$, it cannot gain an advantage by retaining shorter utterances, easier text, particular speakers, or more training updates. If a recognizer trained on $\{\tilde{x}_{u,\pi_m(u)},y_u\}_{u\in\mathcal{U}}$ differs from a random-choice recognizer, the difference can be attributed to the waveform-selection policy under the stated setup.
+
+The secondary experiment instead contains one candidate $z_i$ per raw recording and an audio-duration budget $B$. A global policy retains
+\begin{equation}
+\mathcal{S}^{\mathrm{global}}_m(B)=
+\operatorname*{top}_{\sum_i d_i \leq B} s_m(z_i),
+\label{eq:global}
+\end{equation}
+where $d_i$ is duration. This can change the source composition. Our source-quantile policy retains the highest scores \emph{inside} each source $g$, with duration quota
+\begin{equation}
+B_g=B\,\frac{\sum_{i:g_i=g}d_i}{\sum_i d_i}.
+\label{eq:quota}
+\end{equation}
+Equation~\ref{eq:quota} specifies the target source-duration allocation. The implementation realizes it with a deterministic duration-proportional round robin: it ranks recordings relative to their own recording source, remains as close to the target allocation as indivisible segments permit, and never exceeds the total budget. This tests a weaker, more defensible use of quality than global filtering.
+
+\section{Research questions and hypotheses}
+
+\textbf{RQ1:} Can no-reference quality metrics distinguish the less severe member of controlled candidate pairs? We report pairwise selection accuracy and score--severity association by corruption family. This is a construct check, not a claim that the known generator severity equals human MOS.
+
+\textbf{RQ2:} Does selecting the higher-scoring candidate improve downstream \asr{} when all non-waveform factors are held fixed? The pre-specified primary comparison is \dns{}-OVRL versus uniformly random candidate choice at the fixed 25-hour budget on clean evaluation speech. The primary effect is metric-selected \wer{} minus random-selected \wer{}; negative values favor the metric.
+
+\textbf{RQ3:} Do \dns{} components and \squim{} agree on downstream utility? We evaluate OVRL, SIG, BAK, reference-free \squim{} PESQ, a lower-score falsification control, and an oracle generator-severity selector. These are exploratory comparisons, because the metrics target different constructs.
+
+\textbf{RQ4:} What does global quality filtering remove? On the natural-recording pool, we compare random selection, global top-\dns{}, global top-\squim{}, global bottom-\dns{}, source-quantile \dns{}, and score-stratified \dns{}. We audit retained duration, source entropy, effective source count, lexical type coverage, condition entropy where generator labels exist, selected score distribution, mean \wer{}, and worst-condition \wer{}.
+
+The motivating hypothesis is conditional rather than absolute. High predicted quality should be useful for choosing between alternate recordings of the same source utterance, but a globally comparable score is not guaranteed to be a monotonic utility function once it also determines which speakers, lexical contexts, and adverse conditions survive selection. The falsification control makes the opposite direction observable: if low-score selection is as good as or better than high-score selection in the paired design, the intended score cannot be interpreted as a positive local utility ranking under this protocol.
+
+\section{Experimental design}
+
+\subsection{Data and resource partitioning}
+
+We use the public LibriSpeech corpus \citep{panayotov2015librispeech} as the raw source of waveform--transcript pairs. The controlled pool is deterministically drawn from \texttt{train-clean-100}; unmodified naturally variable recordings for the deployment-style study are deterministically drawn from \texttt{train-other-500}. Standard \texttt{test-clean} and \texttt{test-other} splits form held-out evaluation conditions. Throughout, a \emph{source} is a LibriSpeech speaker identifier; a \emph{source utterance} is the original waveform--transcript pair from that speaker. No LibriSpeech-pretrained \asr{} model is used, avoiding supervised or self-supervised overlap between the intervention corpus and the recognizer initialization.
+
+Additive interferers come from MUSAN \citep{snyder2015musan}; reverberation uses publicly distributed RIRs from OpenSLR RIRS\_NOISES. We use real RIR convolution because realistic room responses matter for robust recognition augmentation \citep{ko2017reverb}. Before rendering, every MUSAN and RIR file is assigned by a stable SHA-256 hash to train, unused-buffer, or test resource partitions. Candidate rendering only accesses the train partition; held-out synthetic evaluation only accesses the test partition. This prevents a score selector or recognizer from seeing the exact noise/RIR assets used at evaluation.
+
+All arms apply the same non-quality validity filter: a nonempty normalized transcript and duration from 1.5 to 18 seconds. The pipeline then decodes every file to mono and resamples it to 16~kHz; rendered candidates are peak-bounded at 0.95 before PCM storage. These processing choices are applied before any score is read. Table~\ref{tab:protocol} lists fixed settings; they are experimental design parameters, not observed results.
+
+\begin{table}[t]
+\caption{Pre-specified experimental protocol. These values are fixed by \texttt{configs/study.yaml}.}
+\label{tab:protocol}
+\centering
+\small
+\begin{tabular}{p{0.48\linewidth}r}
+\toprule
+Item & Setting \\
+\midrule
+Primary source pool & 50 h from \texttt{train-clean-100} \\
+Primary selection budgets & 10, 25, 50 h \\
+Candidates per source utterance & 2 \\
+Candidate families & noise, reverb, noise+reverb, bandlimit \\
+Natural-recording pool / budget & 50 h / 25 h \\
+Recognizer & randomly initialized compact CTC encoder \\
+CTC character vocabulary & A--Z, apostrophe, space, blank \\
+Training updates per run & 3000 \\
+Primary-analysis seeds & 8 paired seeds \\
+Exploratory seeds & 3 paired seeds \\
+Decoding & greedy CTC; no external language model \\
+Unseen synthetic tests & 0-dB noise, 10-dB noise, reverb+noise \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Counterfactual candidate rendering}
+
+For each selected source utterance, a stable hash chooses one family from additive noise, RIR reverberation, reverb-plus-noise, and low-pass bandlimiting. We render one lower-severity and one higher-severity candidate within that family using the same sampled noise/RIR file and crop when relevant; only the configured severity parameters differ. The candidate slot is randomly permuted by a recorded hash so that slot identity carries no quality information. The lower/higher generator severity is hidden from all deployable selectors and used only for the diagnostic oracle and metric construct analysis.
+
+The noise candidates differ in signal-to-noise ratio; reverberant candidates differ in dry/wet mixture; bandlimited candidates differ in low-pass cutoff; combined candidates vary both SNR and reverberant mixture. Each output is cropped to the source duration and peak-bounded at 0.95. The immutable manifest records raw and rendered SHA-256 values, source/speaker/chapter identifiers, transcript, candidate path, family, hidden severity rank, operation seed, noise and RIR identifiers, and all generated parameters. Thus a reader can trace any selector decision back to a raw waveform without granting that information to the selector.
+
+\subsection{Frozen quality selectors}
+
+The pipeline calls two no-reference metric families without fine-tuning them on the study data:
+
+\begin{itemize}[leftmargin=1.2em,itemsep=0.1em]
+    \item \dns{} P.835 yields P.808 MOS, SIG, BAK, and OVRL; we use OVRL as the pre-specified primary score and SIG/BAK as exploratory components \citep{reddy2022dnsmosp835}.
+    \item TorchAudio \squim{} Objective yields reference-free estimates of STOI, PESQ, and SI-SDR; we use estimated PESQ as the exploratory selector \citep{kumar2023squim}.
+\end{itemize}
+
+The pipeline pins package versions, downloads third-party metric models at runtime rather than redistributing them, and records the observed ONNX SHA-256 fingerprints. The selector sees only metric outputs and, for the source-quantile policy, the permitted source identifier. It does not see transcripts, source clean audio, corruption labels, severity rank, noise/RIR identifiers, or an \asr{} model.
+
+\subsection{Selection policies}
+
+For the paired experiment, each policy selects one candidate from each pair:
+\begin{description}[leftmargin=1.8em,itemsep=0.1em]
+    \item[Random] Hash-seeded uniform candidate choice.
+    \item[\dns{} OVRL, SIG, BAK] Select the maximum indicated P.835 component.
+    \item[\squim{} PESQ] Select the maximum reference-free estimated PESQ.
+    \item[Low \dns{} OVRL] Select the minimum OVRL as a directional falsification control.
+    \item[Oracle severity] Select the lower hidden generator-severity rank. This is a diagnostic ceiling, not a deployable method.
+\end{description}
+
+For the natural-recording fixed-hour experiment, all policies retain the same nominal duration: hash-random, global top-\dns{} OVRL, global top-\squim{} PESQ, global bottom-\dns{} OVRL, source-quantile top-\dns{} OVRL, and score-stratified \dns{} selection. Source-quantile selection targets Eq.~\ref{eq:quota} through the duration-proportional round robin above; score-stratified selection samples the same duration from each empirical \dns{} quintile. These policies test whether a quality score has useful information while explicitly separating ranking from distribution collapse.
+
+\subsection{Recognizer and optimization}
+
+We train a compact CTC encoder from random initialization with the CTC criterion \citep{graves2006ctc}. Its convolutional front end reduces the waveform to a manageable frame rate; a four-layer Transformer encoder produces character logits. The fixed character vocabulary is determined before any selection. Every run evaluates the final, fixed-step checkpoint (3,000 updates); no development or test condition selects a checkpoint, policy, architecture, or schedule. There is no external language model, self-training, or training-time data augmentation.
+
+For each seed, every paired policy uses the same model initialization, utterance-ID order, batch layout, optimizer, learning-rate schedule, number of update steps, and gradient accumulation. A training manifest differs only in the selected audio rendition. The global study similarly fixes training steps across policies so that changes in \wer{} cannot be explained by extra optimization. The run logs loss traces, checkpoint metadata, input-manifest checksums, and all decoded test hypotheses.
+
+\subsection{Evaluation and statistics}
+
+We report corpus \wer{} on clean, other, 0-dB noise, 10-dB noise, and reverb-plus-noise evaluation conditions. The designated primary analysis pairs the same eight model seeds between \dns{} OVRL and random selection at the pre-specified 25-hour budget on clean evaluation speech. This plan is encoded before execution but is not an externally registered trial; we therefore call it a pre-specified primary analysis rather than a formal confirmatory claim. The seed is the inferential unit. We report all seed-level values, the mean difference, a two-sided exact paired sign-flip test, and a hierarchical paired bootstrap confidence interval. For the primary test, the p-value enumerates all $2^8$ signs of the paired seed differences; exact zero differences are retained as ties. The bootstrap has a separate role: each replicate resamples paired training seeds and then resamples held-out test speakers while preserving all utterances belonging to a sampled speaker. Test utterances are therefore not incorrectly treated as independent model-training replicates.
+
+All component, alternate-metric, budget-sweep, robustness, and global-filtering comparisons are exploratory. Their within-family p-values are Holm-adjusted. We report raw composition diagnostics instead of inferring demographic fairness from unavailable or unreliable metadata: unique and effective source counts, source entropy, lexical type coverage, duration, acoustic-family entropy in the controlled data, and score distributions.
+
+\section{Results}
+
+\subsection{Metric behavior on controlled pairs}
+
+Figure~\ref{fig:metric-choice} reports how often a metric chooses the lower-severity candidate within a pair, separately by corruption family in the generated CSV and aggregated in the plot. This diagnostic should be read narrowly: it checks whether a frozen metric tracks the controlled perturbation order, not whether generator severity is equivalent to listener MOS or \asr{} value. Overall lower-severity selection was \placeholder{dnsmos\_ovrl\_lower\_severity\_selection\_percent}\% for \dns{} OVRL, \placeholder{dnsmos\_sig\_lower\_severity\_selection\_percent}\% for SIG, \placeholder{dnsmos\_bak\_lower\_severity\_selection\_percent}\% for BAK, and \placeholder{squim\_pesq\_lower\_severity\_selection\_percent}\% for \squim{} PESQ.
+
+\begin{figure}[t]
+\centering
+\IfFileExists{generated/fig_metric_choice_accuracy.pdf}{%
+  \includegraphics[width=\linewidth]{generated/fig_metric_choice_accuracy.pdf}%
+}{\missingfigure{generated/fig\_metric\_choice\_accuracy.pdf}}
+\caption{Controlled-pair construct diagnostic. Bars are generated from source-pair bootstrap intervals. The dashed line denotes random pair choice.}
+\label{fig:metric-choice}
+\end{figure}
+
+The key interpretation is conditional. A high selection rate shows that a metric detects the synthetic severity dimension represented by the pair; it does not establish a global calibration or prove that selecting higher score improves a trained recognizer. Conversely, failure to select the lower-severity member indicates a domain mismatch before downstream training is considered. Per-family score--severity correlations and pair counts are provided in \texttt{results/metric\_behavior.csv}.
+
+\subsection{Primary paired downstream comparison}
+
+Table~\ref{tab:primary} contains the pre-specified primary comparison. Random and \dns{}-OVRL selectors were trained with the identical eight seeds, exact source set, duration, transcripts, speakers, update budget, and utterance ordering. The random baseline's clean \wer{} is \placeholder{primary\_random\_clean\_wer\_percent}\% ($\pm\placeholder{primary\_random\_clean\_wer\_sd\_percent}$), and the \dns{}-selected \wer{} is \placeholder{primary\_dnsmos\_clean\_wer\_percent}\% ($\pm\placeholder{primary\_dnsmos\_clean\_wer\_sd\_percent}$). The pre-specified signed effect is \placeholder{primary\_dnsmos\_minus\_random\_percentage\_points} percentage points (metric minus random; negative favors the metric), with hierarchical interval \placeholder{primary\_dnsmos\_minus\_random\_ci\_percentage\_points} and exact two-sided sign-flip $p=\placeholder{primary\_sign\_flip\_p}$.
+
+\begin{table}[t]
+\caption{Primary pre-specified comparison at the fixed 25-hour budget. All quantities are filled from the audited result guide after execution.}
+\label{tab:primary}
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Policy & Clean \wer{} (\%) & SD & Seeds \\
+\midrule
+Random pair & \placeholder{primary\_random\_clean\_wer\_percent} &
+\placeholder{primary\_random\_clean\_wer\_sd\_percent} & 8 \\
+\dns{} OVRL pair & \placeholder{primary\_dnsmos\_clean\_wer\_percent} &
+\placeholder{primary\_dnsmos\_clean\_wer\_sd\_percent} & 8 \\
+\midrule
+Difference (metric $-$ random), pp & \multicolumn{3}{c}{\placeholder{primary\_dnsmos\_minus\_random\_percentage\_points}} \\
+Hierarchical 95\% CI, pp & \multicolumn{3}{c}{\placeholder{primary\_dnsmos\_minus\_random\_ci\_percentage\_points}} \\
+Sign-flip $p$ & \multicolumn{3}{c}{\placeholder{primary\_sign\_flip\_p}} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Figure~\ref{fig:paired-wer} extends the same two policies across held-out acoustic conditions. The plot is descriptive outside the pre-specified primary clean condition. It tests the proposed trade-off directly: a clean-condition quality benefit, if observed, need not imply better performance under unseen noise or reverberation. The generated \texttt{policy\_contrasts.csv} retains the unadjusted primary p-value and exploratory Holm-adjusted values for every policy-versus-random comparison.
+
+\begin{figure}[t]
+\centering
+\IfFileExists{generated/fig_paired_wer.pdf}{%
+  \includegraphics[width=\linewidth]{generated/fig_paired_wer.pdf}%
+}{\missingfigure{generated/fig\_paired\_wer.pdf}}
+\caption{Paired random versus \dns{}-OVRL selection across evaluation conditions at the pre-specified budget. Points are seed means; bars are seed standard deviations. Only the clean contrast is the pre-specified primary analysis.}
+\label{fig:paired-wer}
+\end{figure}
+
+\subsection{Component, metric, and falsification ablations}
+
+The SIG, BAK, \squim{} PESQ, low-OVRL, and oracle policies determine which aspect of a score is associated with training utility under matched content. Their complete seed-level results are generated rather than summarized selectively. The low-OVRL policy is essential: if it matches or surpasses top-OVRL in the paired clean condition, then a monotonic positive quality-to-utility interpretation is contradicted for this setting. If the oracle substantially exceeds all deployable metrics, the controlled candidates contain useful severity information that the metric did not exploit; if it does not, the chosen severity dimension is not the operative determinant of this recognizer's utility.
+
+The budget sweep distinguishes a local score effect from an effect that appears only at a particular amount of data. All non-primary comparisons should be interpreted with the stated Holm correction, not by comparing uncorrected isolated p-values. The repository writes every run, including unsuccessful or counterintuitive directions, to \texttt{results/wer.csv}; there is no best-run selection.
+
+\subsection{Global filtering and retention composition}
+
+The secondary experiment asks the operational question that the paired experiment intentionally avoids: what happens when a curator removes whole recordings? The natural pool is scored once and every policy selects the same nominal 25-hour duration. The random clean \wer{} is \placeholder{natural\_global\_random\_clean\_wer\_percent}\%; global top-\dns{} is \placeholder{natural\_global\_dnsmos\_ovrl\_clean\_wer\_percent}\%; source-quantile top-\dns{} is \placeholder{natural\_global\_source\_quantile\_dnsmos\_clean\_wer\_percent}\%; and score-stratified selection is \placeholder{natural\_global\_score\_stratified\_dnsmos\_clean\_wer\_percent}\%. Figure~\ref{fig:global-pareto} jointly displays selected mean \dns{} score, clean \wer{}, and effective source count.
+
+\begin{figure}[t]
+\centering
+\IfFileExists{generated/fig_global_pareto.pdf}{%
+  \includegraphics[width=\linewidth]{generated/fig_global_pareto.pdf}%
+}{\missingfigure{generated/fig\_global\_pareto.pdf}}
+\caption{Deployment-style global filtering. Each point is a fixed-duration policy; point area denotes effective source count. A high mean selected score is not by itself a downstream objective.}
+\label{fig:global-pareto}
+\end{figure}
+
+\begin{table*}[t]
+\caption{Global-filtering audit. Values are generated in \texttt{selection\_composition.csv} and \texttt{wer\_summary.csv}. The table intentionally reports what global filtering retains, not only its final error rate.}
+\label{tab:global}
+\centering
+\small
+\begin{tabular}{lrrrrrr}
+\toprule
+Policy & Hours & Unique sources & Effective sources & Lexical coverage & Mean OVRL & Clean \wer{} (\%) \\
+\midrule
+Random & \placeholder{random selected hours} & \placeholder{random unique sources} & \placeholder{random effective sources} & \placeholder{random lexical coverage} & \placeholder{random mean OVRL} & \placeholder{natural\_global\_random\_clean\_wer\_percent} \\
+Global top \dns{} & \placeholder{top OVRL selected hours} & \placeholder{top OVRL unique sources} & \placeholder{top OVRL effective sources} & \placeholder{top OVRL lexical coverage} & \placeholder{top OVRL mean} & \placeholder{natural\_global\_dnsmos\_ovrl\_clean\_wer\_percent} \\
+Global top \squim{} & \placeholder{SQUIM selected hours} & \placeholder{SQUIM unique sources} & \placeholder{SQUIM effective sources} & \placeholder{SQUIM lexical coverage} & \placeholder{SQUIM mean OVRL} & \placeholder{natural\_global\_squim\_pesq\_clean\_wer\_percent} \\
+Global bottom \dns{} & \placeholder{bottom OVRL selected hours} & \placeholder{bottom OVRL unique sources} & \placeholder{bottom OVRL effective sources} & \placeholder{bottom OVRL lexical coverage} & \placeholder{bottom OVRL mean} & \placeholder{natural\_global\_low\_dnsmos\_ovrl\_clean\_wer\_percent} \\
+Source-quantile \dns{} & \placeholder{quota selected hours} & \placeholder{quota unique sources} & \placeholder{quota effective sources} & \placeholder{quota lexical coverage} & \placeholder{quota mean OVRL} & \placeholder{natural\_global\_source\_quantile\_dnsmos\_clean\_wer\_percent} \\
+Score-stratified \dns{} & \placeholder{stratified selected hours} & \placeholder{stratified unique sources} & \placeholder{stratified effective sources} & \placeholder{stratified lexical coverage} & \placeholder{stratified mean OVRL} & \placeholder{natural\_global\_score\_stratified\_dnsmos\_clean\_wer\_percent} \\
+\bottomrule
+\end{tabular}
+\end{table*}
+
+\section{Discussion}
+
+\subsection{How to read the two experiments together}
+
+The paired and global experiments answer different questions and should not be conflated. If a high-score policy improves the paired comparison, it demonstrates that the metric has useful local ordering information in this controlled rendition space. It does \emph{not} establish that globally discarding low-score recordings is safe: Eq.~\ref{eq:global} changes the training distribution. If source-quantile selection preserves or improves a global result while retaining more source diversity, that is evidence that calibration and coverage constraints matter. If global selection dominates source-quantile selection without a meaningful coverage loss, the practical case for a simple threshold is stronger for this corpus and model. Either outcome is scientifically informative because the data, selection rule, and downstream criterion are explicit.
+
+The primary result should therefore be reported with its sign rather than a vague improvement label. In this paper's convention, a negative \dns{}-minus-random effect favors high-OVRL selection; a positive value favors random selection. The observed primary effect, \placeholder{primary\_dnsmos\_minus\_random\_percentage\_points} percentage points, is accompanied by uncertainty \placeholder{primary\_dnsmos\_minus\_random\_ci\_percentage\_points}. This prevents a potentially small numerical difference from being promoted to a general claim about MOS metrics.
+
+\subsection{Metric disagreement is a finding, not an implementation failure}
+
+\dns{} OVRL, SIG, BAK, and \squim{} PESQ are not redundant labels. They encode different training data, signal assumptions, and targets. Agreement among them would suggest that the induced ranking is robust to these definitions; disagreement reveals a concrete ambiguity in a curation rule such as filtering low-quality data. The component ablation operationalizes this ambiguity rather than hiding it in a single arbitrary threshold. NISQA and other predictors remain valuable future extensions, but adding a model with a different source domain cannot by itself resolve score comparability.
+
+\subsection{Limitations}
+
+The controlled experiment uses English read speech and synthetic degradations. It isolates mechanism at the cost of covering only perturbations we can render and order. The secondary pool adds naturally variable recordings but remains within LibriSpeech's audiobook domain. The compact randomly initialized recognizer is intentionally chosen to avoid pretraining leakage; results may differ for a large self-supervised recognizer, a transducer, a language model, multilingual speech, conversational overlap, or noisy transcripts. We do not claim demographic fairness: source/speaker retention is an audit of dataset composition, not an inference about identity or protected groups.
+
+The score implementations themselves are external artifacts. The code records versions, model cache fingerprints, seeds, manifests, and software environment, but future upstream model releases may require a compatibility update. The study also measures \wer{}; task utility for keyword spotting, diarization, speech enhancement, or synthesis can differ. Finally, an oracle severity rank is available only because this benchmark has known generation parameters and must not be treated as a deployable curation policy.
+
+\subsection{Data use, licenses, and ethics}
+
+The artifact downloads, rather than redistributes, LibriSpeech (CC BY 4.0), MUSAN (CC BY 4.0), and RIRS\_NOISES (Apache-2.0). It uses their publicly supplied waveform--transcript material only for research reproduction and retains source/speaker identifiers solely for fixed-content pairing and aggregate composition audits. No demographic labels are inferred, and no claim about protected groups is made. Candidate rendering never accesses held-out test noise or RIR assets, and the final recognizer uses neither a LibriSpeech-pretrained checkpoint nor an external language model. These protections reduce leakage but do not turn an audiobook benchmark into evidence about every speech community or deployment setting.
+
+\subsection{Practical implications}
+
+Three practices follow regardless of the numerical outcome. First, evaluate a quality threshold on downstream training rather than only on score histograms or MOS correlation. Second, retain an unfiltered random baseline at the same audio duration and update budget; otherwise data volume or compute can masquerade as curation benefit. Third, audit what a global threshold removes. Source quota, within-source percentile ranking, or explicit score-stratification are simple alternatives when a score is informative but not globally calibrated.
+
+\section{Conclusion}
+
+This work turns the intuitive claim to keep the best-sounding speech into a falsifiable downstream experiment. It separates two often confounded questions: whether a frozen quality metric can choose a better rendition of the \emph{same} utterance, and whether globally filtering recordings preserves the distribution a recognizer needs. The observed paired effect is \placeholder{primary\_dnsmos\_minus\_random\_percentage\_points} percentage points in the pre-specified direction, with interval \placeholder{primary\_dnsmos\_minus\_random\_ci\_percentage\_points}. More broadly, the result must be read alongside source retention and adverse-condition \wer{}, not in isolation. The accompanying raw-audio pipeline makes that evaluation reproducible: all selectors, candidates, manifests, model seeds, decoded hypotheses, statistics, and figures are generated by one command. We recommend treating perceptual quality as an auditable curation signal whose downstream utility must be measured, not as an automatically transferable definition of useful training data.
+
+\section*{Acknowledgements}
+This anonymized submission intentionally omits acknowledgements.
+
+\bibliographystyle{plainnat}
+\bibliography{references}
+\end{document}

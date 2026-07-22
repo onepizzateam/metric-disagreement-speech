@@ -1,0 +1,127 @@
+# This file is the pre-specified experiment plan. Do not change it after observing results.
+run:
+  name: quality_curation_v1
+  seed: 20270701
+  device: auto
+  num_workers: 4
+  deterministic_algorithms: true
+  overwrite_derived_audio: false
+
+paths:
+  raw: data/raw
+  derived: data/derived
+  manifests: data/manifests
+  results: results
+  checkpoints: checkpoints
+  paper_generated: paper/generated
+
+resources:
+  sample_rate: 16000
+  librispeech_root: data/raw/librispeech
+  musan_url: https://www.openslr.org/resources/17/musan.tar.gz
+  # Official OpenSLR checksum.md5 entries, verified 2026-07-22.
+  musan_md5: 0c472d4fc0c5141eca47ad1ffeb2a7df
+  rirs_url: https://www.openslr.org/resources/28/rirs_noises.zip
+  rirs_md5: e6f48e257286e05de56413b4779d8ffb
+  # Hash buckets ensure that source noise and RIR files used for test rendering are never used in training rendering.
+  resource_split: [0.80, 0.10, 0.10]
+
+primary:
+  enabled: true
+  train_split: train-clean-100
+  pool_hours: 50
+  candidate_count: 2
+  budgets_hours: [10, 25, 50]
+  families: [noise, reverb, noise_reverb, bandlimit]
+  # The lower-severity candidate is deliberately assigned a random slot; selectors cannot use candidate position.
+  low_severity:
+    noise_snr_db: 15
+    reverb_wet: 0.25
+    bandlimit_hz: 7000
+  high_severity:
+    noise_snr_db: 0
+    reverb_wet: 1.00
+    bandlimit_hz: 2500
+  paired_policies:
+    - pair_random
+    - pair_dnsmos_ovrl
+    - pair_dnsmos_sig
+    - pair_dnsmos_bak
+    - pair_squim_pesq
+    - pair_low_dnsmos_ovrl
+    - pair_oracle_severity
+  confirmatory_policy: pair_dnsmos_ovrl
+  confirmatory_budget_hours: 25
+  confirmatory_seeds: [11, 23, 37, 41, 53, 67, 79, 97]
+  exploratory_seeds: [11, 23, 37]
+
+natural:
+  # A deployment-style validation on unmodified, naturally variable recordings.
+  enabled: true
+  train_split: train-other-500
+  pool_hours: 50
+  budget_hours: 25
+  policies:
+    - global_random
+    - global_dnsmos_ovrl
+    - global_squim_pesq
+    - global_source_quantile_dnsmos
+    - global_score_stratified_dnsmos
+    - global_low_dnsmos_ovrl
+  seeds: [11, 23, 37]
+
+evaluation:
+  test_clean_split: test-clean
+  test_other_split: test-other
+  synthetic_conditions:
+    - name: noise_0db
+      family: noise
+      noise_snr_db: 0
+    - name: noise_10db
+      family: noise
+      noise_snr_db: 10
+    - name: reverb_noise
+      family: noise_reverb
+      noise_snr_db: 0
+      reverb_wet: 1.0
+
+metrics:
+  # Both are reference-free during selection. PESQ/STOI below are SQUIM estimates, not intrusive scores.
+  dnsmos:
+    enabled: true
+    personalized: false
+  squim:
+    enabled: true
+    objective_bundle: SQUIM_OBJECTIVE
+
+asr:
+  sample_rate: 16000
+  vocabulary: " ABCDEFGHIJKLMNOPQRSTUVWXYZ'"
+  model:
+    conv_channels: [96, 144, 192, 256, 256]
+    conv_kernels: [10, 8, 8, 4, 4]
+    conv_strides: [5, 4, 4, 2, 2]
+    d_model: 256
+    nhead: 4
+    num_layers: 4
+    dim_feedforward: 1024
+    dropout: 0.10
+  train:
+    batch_size: 8
+    gradient_accumulation: 2
+    max_steps: 3000
+    learning_rate: 0.0003
+    weight_decay: 0.01
+    warmup_steps: 400
+    max_audio_seconds: 18
+    grad_clip_norm: 5.0
+    eval_every_steps: 250
+
+statistics:
+  bootstrap_draws: 2000
+  confidence_level: 0.95
+  correction: holm
+
+report:
+  figure_dpi: 220
+  primary_evaluation: clean
