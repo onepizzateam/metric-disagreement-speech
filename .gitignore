@@ -1,0 +1,15 @@
+.venv/
+__pycache__/
+*.py[cod]
+data/raw/
+data/derived/
+data/manifests/
+results/
+checkpoints/
+paper/generated/*.csv
+paper/generated/*.json
+paper/generated/*.md
+paper/generated/*.tex
+paper/generated/*.pdf
+paper/generated/*.png
+!paper/generated/.gitkeep

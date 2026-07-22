@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qc-curation"
+version = "0.1.0"
+description = "Counterfactual evaluation of quality-conditioned speech data curation"
+requires-python = ">=3.10,<3.13"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+qc-curation = "qc_curation.cli:main"

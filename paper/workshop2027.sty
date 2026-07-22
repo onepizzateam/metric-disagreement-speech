@@ -1,0 +1,41 @@
+\NeedsTeXFormat{LaTeX2e}
+\ProvidesPackage{workshop2027}[2026/07/22 Provisional self-contained workshop manuscript format]
+\RequirePackage[a4paper,margin=1.8cm,top=1.65cm,bottom=1.8cm]{geometry}
+\RequirePackage[T1]{fontenc}
+\RequirePackage[utf8]{inputenc}
+\RequirePackage{microtype}
+\RequirePackage{times}
+\RequirePackage{graphicx}
+\RequirePackage{booktabs}
+\RequirePackage{multirow}
+\RequirePackage{array}
+\RequirePackage{amsmath,amssymb}
+\RequirePackage{natbib}
+\RequirePackage{url}
+\RequirePackage{xcolor}
+\RequirePackage{hyperref}
+\RequirePackage{enumitem}
+\RequirePackage{caption}
+\RequirePackage{subcaption}
+\RequirePackage{float}
+\RequirePackage{threeparttable}
+\makeatletter
+\hypersetup{colorlinks=true,linkcolor=black,citecolor=black,urlcolor=blue}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
+\setlength{\columnsep}{0.65cm}
+\renewcommand{\maketitle}{%
+  \begin{center}
+  {\LARGE\bfseries \@title\par}
+  \vspace{0.45em}
+  {\large \@author\par}
+  \vspace{0.6em}
+  \end{center}
+}
+\makeatother
+\newcommand{\keywords}[1]{\vspace{0.3em}\noindent\textbf{Index Terms---} #1}
+\newcommand{\missingfigure}[1]{%
+  \fbox{\parbox[c][4.0cm][c]{0.95\linewidth}{\centering
+  \textit{Generated figure pending: #1}\\
+  Run \texttt{bash experiments/run.sh} to create this file.}}}
+\captionsetup{font=small,labelfont=bf}
